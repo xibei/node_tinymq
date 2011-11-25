@@ -266,7 +266,7 @@ Queue.prototype.start = function(callback) {
     var exists = path.existsSync(self.q_path);
     if(!exists) {
         try {
-            fs.mkdirSync(self.q_path);
+            fs.mkdirSync(self.q_path, 0755);
         } catch(err) {
             self.status = 0;
             self.emit('error', err);
