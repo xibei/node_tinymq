@@ -439,15 +439,33 @@ Queue.prototype._save = function() {
 Queue.prototype.enQueue = function(value) {
   var self = this;
 
-  if (!value || value.length <= 0) {
+  var type;
+  if (Buffer.isBuffer(value)) {
+    type = 'buffer';
+  } else if(util.isArray(value)) {
+    type = 'array';
+  } else {
+    throw new TypeError('param type error');
+  }
+
+  if (type == 'buffer' && value.length <= 0) {
     throw new Error('value is empty');
+  }
+  if (type == 'array') {
+    value.size = 0;
+    for (var i = 0; i < value.length; i++) {
+      value.size += value[i].length;
+    }
+    if (value.size <= 0) {
+      throw new Error('value is empty');
+    }
   }
 
   if (self.status != 2) {
     throw new Error('queue is not started');
   }
 
-  var size = value.length;
+  var size = (type == 'buffer') ? value.length : value.size;
   if (size > 0xFFFF) {
     throw new Error('value length is too big(don\'t exceed 65535 bytes)');
   }
@@ -462,6 +480,7 @@ Queue.prototype.enQueue = function(value) {
   sizeBuffer.writeUInt8(CHECK_CODE, 0);
   sizeBuffer.writeUInt16BE(size, 1);
   var rear;
+
   if (self._wBufSize >= self._wRear + 3) {
     rear = self._wRear + 3;
     sizeBuffer.copy(self._wBuffer, self._wRear, 0, 3);
@@ -470,18 +489,50 @@ Queue.prototype.enQueue = function(value) {
     sizeBuffer.copy(self._wBuffer, self._wRear, 0, 3 - rear);
     sizeBuffer.copy(self._wBuffer, 0, 3 - rear, 3);
   }
+
   if (self._wBufSize >= rear + size) {
     self._wRear = rear + size;
-    value.copy(self._wBuffer, rear, 0, size);
+
+    if (type == 'buffer') {
+      value.copy(self._wBuffer, rear, 0, size);
+    } else {
+      var targetStart = rear;
+      for (var i = 0; i < value.length; i++) {
+        value[i].copy(self._wBuffer, targetStart, 0, value[i].length);
+        targetStart += value[i].length;
+      }
+    }
   } else {
     self._wRear = size - (self._wBufSize - rear);
-    value.copy(self._wBuffer, rear, 0, size - self._wRear);
-    value.copy(self._wBuffer, 0, size - self._wRear, size);
+
+    if (type == 'buffer') {
+      value.copy(self._wBuffer, rear, 0, size - self._wRear);
+      value.copy(self._wBuffer, 0, size - self._wRear, size);
+    } else {
+      var targetStart = rear;
+      for (var i = 0; i < value.length; i++) {
+        if (targetStart + value[i].length <= self._wBufSize) {
+          value[i].copy(self._wBuffer, targetStart, 0, value[i].length);
+          targetStart += value[i].length;
+        } else {
+          value[i].copy(self._wBuffer, targetStart, 0, self._wBufSize - targetStart);
+          var sourceStart = self._wBufSize - targetStart;
+          break;
+        }
+      }
+      targetStart = 0;
+      for (; i < value.length; i++) {
+        value[i].copy(self._wBuffer, targetStart, sourceStart, value[i].length);
+        targetStart += value[i].length - sourceStart;
+        sourceStart = 0;
+      }
+    }
   }
 
   if (self._wRear >= self._wBufSize) {
     self._wRear -= self._wBufSize;
   }
+
   self.length++;
   self._wUnsavedSize += 3 + size;
   self._wUsedSize += 3 + size;

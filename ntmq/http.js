@@ -31,30 +31,14 @@ httpWrap.createServer = function(callback) {
         res.end(value);
       }
     } else if (req.method == 'POST' || req.method == 'PUT') {
-      var buffer = new Buffer(0xffff);
-      var bufferUsed = 0;
-      var overflow = false;
+      var dataArray = [];
       req.on('data', function(data) {
-        if (overflow) {
-          return;
-        }
-        if (data.length > buffer.length - bufferUsed) {
-          overflow = true;
-          return;
-        }
-        data.copy(buffer, bufferUsed);
-        bufferUsed += data.length;
+        dataArray.push(data);
       });
 
       req.on('end', function() {
-        if (overflow) {
-          var error = 'request entity too large';
-          res.writeHead(413, {'Content-Type': 'application/binary', 'Content-Length': error.length});
-          res.end(error);
-          return;
-        }
         try {
-          callback(true, queueName, buffer.slice(0, bufferUsed));
+          callback(true, queueName, dataArray);
         } catch (err) {
           res.writeHead(500, {'Content-Type': 'application/binary', 'Content-Length': err.message.length});
           res.end(err.message);
