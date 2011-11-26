@@ -2,7 +2,6 @@ var http = require('http');
 var path = require('path');
 
 var http_wrap = {};
-var buffer = new Buffer(0xffff);
 
 http_wrap.createServer = function(callback) {
     return http.createServer(function(req, res) {
@@ -33,6 +32,7 @@ http_wrap.createServer = function(callback) {
                 res.end(value);
             }
         } else if(req.method=='POST' || req.method=='PUT') {
+            var buffer = new Buffer(0xffff);
             var buffer_used = 0;
             var overflow = false;
             req.on('data', function(data) {
