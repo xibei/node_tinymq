@@ -29,7 +29,7 @@ var options = {
     i_timeout : 100                             //记录指针文件的时间间隔（ms）
 };
 
-var server = new Server('q1', 'q2', options);
+var server = new Server('q1', 'q2', options);   //其中q1、q2为消息队列名称，可指定任意多个消息队列
 server.on("error", function(err) {
     console.log("error:"+err);
 });
