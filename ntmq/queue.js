@@ -1,745 +1,746 @@
-// load config
 var path = require('path');
 var fs = require('fs');
 var events = require('events');
+var util = require('util');
 
 //check code
-var check_code = 0x21;
+var CHECK_CODE = 0x21;
 
 //class Queue
 function Queue(name, options) {
-    var self = this;
+  var self = this;
 
-    self.name = name;                                       //队列名称
-    self.q_path = path.join(options.q_path, name);           //队列文件路径
+  self._name = name;                                          //队列名称
+  self._qPath = path.join(options.qPath, name);               //队列文件路径
 
-    self.w_buf_size = options.w_buf_size * 1024 * 1024;      //写缓冲大小（字节数）
-    self.r_buf_size = options.r_buf_size * 1024 * 1024;      //读缓冲大小（字节数）
+  self._wBufSize = options.wBufSize * 1024 * 1024;            //写缓冲大小（字节数）
+  self._rBufSize = options.rBufSize * 1024 * 1024;            //读缓冲大小（字节数）
 
-    self.file_max_size = options.file_max_size * 1024 * 1024;    //文件最大尺寸（字节数）
-    self.max_length = options.max_length;                    //队列最大元素数
+  self._fileMaxSize = options.fileMaxSize * 1024 * 1024;      //文件最大尺寸（字节数）
+  self._maxLength = options.maxLength;                        //队列最大元素数
 
-    self.w_timeout = options.w_timeout;                      //写入文件的间隔时间
-    self.r_timeout = options.r_timeout;                      //读取文件的间隔时间
-    self.i_timeout = options.i_timeout;                      //写入指针文件间隔时间
+  self._wTimeout = options.wTimeout;                          //写入文件的间隔时间
+  self._rTimeout = options.rTimeout;                          //读取文件的间隔时间
+  self._iTimeout = options.iTimeout;                          //写入指针文件间隔时间
 
-    self.init();
+  self._init();
 }
 
 //extents EventEmitter
-Queue.prototype = new events.EventEmitter();
+util.inherits(Queue, events.EventEmitter);
 
-//init
-Queue.prototype.init = function() {
-    var self = this;
+//initiate
+Queue.prototype._init = function() {
+  var self = this;
 
-    self.length = 0;                                        //队列长度（队列内记录数）
+  self.length = 0;                                            //队列长度（队列内记录数）
 
-    self.w_front = 0;                                       //写队列头部位置
-    self.w_rear = 0;                                        //写队列尾部位置
-    self.wf_rear = 0;                                       //写队列持久化尾部位置
-    self.w_used_size = 0;                                   //写队列使用字节数
-    self.w_unsaved_size = 0;                                //写队列未持久化字节数
+  self._wFront = 0;                                           //写队列头部位置
+  self._wRear = 0;                                            //写队列尾部位置
+  self._wFileRear = 0;                                        //写队列持久化尾部位置
+  self._wUsedSize = 0;                                        //写队列使用字节数
+  self._wUnsavedSize = 0;                                     //写队列未持久化字节数
 
-    self.r_front=0;                                         //读队列头部位置
-    self.r_rear = 0;                                        //读队列尾部位置
-    self.r_used_size = 0;                                   //读队列使用字节数
+  self._rFront=0;                                             //读队列头部位置
+  self._rRear = 0;                                            //读队列尾部位置
+  self._rUsedSize = 0;                                        //读队列使用字节数
 
-    self.r_last = 0;                                        //读队列还没有读取的字节数
-    self.r_w_last = 0;                                      //读队列还没有读取的内容中没有被写缓冲的字节数（r_last-(w_used_size-w_unsaved_size)）
+  self._rLast = 0;                                            //读队列还没有读取的字节数
+  self._rLastFromWriteBuffer = 0;                             //读队列还没有读取的内容中没有在写缓冲中的字节数（_rLast-(_wUsedSize-_wUnsavedSize)）
 
-    self.w_buffer = null;                                   //写缓冲
-    self.r_buffer = null;                                   //读缓冲
+  self._wBuffer = null;                                       //写缓冲
+  self._rBuffer = null;                                       //读缓冲
 
-    self.w_file_id = 0;                                     //写文件id
-    self.r_file_id = 0;                                     //读文件id
-    self.w_file_path = path.join(self.q_path, 'queue_'+self.w_file_id);     //写文件路径
-    self.r_file_path = path.join(self.q_path, 'queue_'+self.r_file_id);     //读文件路径
-    self.i_file_path = path.join(self.q_path, 'index');     //指针文件路径
-    self.w_file = null;                                     //写文件句柄
-    self.r_file = null;                                     //读文件句柄
-    self.i_file = null;
-    self.w_file_size = 0;                                   //已写文件大小
-    self.r_file_size = 0;                                   //已读文件大小
-    self.r_front_file_id = 0;                               //读队列头部对应文件id
-    self.r_front_file_offset = 0;                           //读队列头部对应文件偏移量
-    self.r_front_file_id_old = -1;                          //上一次保存的读队列头部对应文件id
-    self.r_front_file_offset_old = -1;                      //上一次保存的读队列头部对应文件偏移量
+  self._wFileId = 0;                                          //写文件id
+  self._rFileId = 0;                                          //读文件id
+  self._wFilePath = path.join(self._qPath, 'queue_' + self._wFileId);     //写文件路径
+  self._rFilePath = path.join(self._qPath, 'queue_' + self._rFileId);     //读文件路径
+  self._iFilePath = path.join(self._qPath, 'index');         //指针文件路径
+  self._wFile = null;                                        //写文件句柄
+  self._rFile = null;                                        //读文件句柄
+  self._iFile = null;
+  self._wFileSize = 0;                                       //已写文件大小
+  self._rFileSize = 0;                                       //已读文件大小
+  self._rFrontFileId = 0;                                    //读队列头部对应文件id
+  self._rFrontFileOffset = 0;                                //读队列头部对应文件偏移量
+  self._rFrontFileOldId = -1;                                //上一次保存的读队列头部对应文件id
+  self._rFrontFileOldOffset = -1;                            //上一次保存的读队列头部对应文件偏移量
 
-    self.w_timeout_id = null;                               //写文件定时器id
-    self.r_timeout_id = null;                               //读文件定时器id
-    self.i_timeout_id = null;                               //指针文件定时器id
+  self._wTimeoutId = null;                                   //写文件定时器id
+  self._rTimeoutId = null;                                   //读文件定时器id
+  self._iTimeoutId = null;                                   //指针文件定时器id
 
-    self.status = 0;                                        //0:关闭;1:准备开始;2:开始;3:准备关闭
+  self.status = 0;                                           //0:关闭;1:准备开始;2:开始;3:准备关闭
 
-    self.f_list = {};                                       //已写入的文件列表，记录文件ID和长度
+  self._filesList = {};                                      //已写入的文件列表，记录文件ID和长度
 };
 
-Queue.prototype.init_file = function() {
-    var self = this;
+Queue.prototype._initFile = function() {
+  var self = this;
 
-    //load index file
-    var index_str;
-    try {
-        index_str = fs.readFileSync(self.i_file_path, 'utf8');
-    } catch(err) {}
+  //load index file
+  var indexStr;
+  try {
+    indexStr = fs.readFileSync(self._iFilePath, 'utf8');
+  } catch (err) {}
 
-    if(index_str) {
-        var indexes = index_str.split(',');
-        if(indexes.length>=2) {
-            var fid = parseInt(indexes[0]);
-            var offset = parseInt(indexes[1]);
-            if(fid>=0 && offset>=0) {
-                self.r_front_file_id = self.r_front_file_id_old = fid;
-                self.r_front_file_offset = self.r_front_file_offset_old = offset;
+  if (indexStr) {
+    var indexes = indexStr.split(',');
 
-                self.r_file_id = fid;
-                self.r_file_path = path.join(self.q_path, 'queue_'+self.r_file_id);
-                self.r_file_size = offset;
-            }
-        }
+    if (indexes.length >= 2) {
+      var fid = parseInt(indexes[0]);
+      var offset = parseInt(indexes[1]);
+
+      if (fid >= 0 && offset >= 0) {
+        self._rFrontFileId = self._rFrontFileOldId = fid;
+        self._rFrontFileOffset = self._rFrontFileOldOffset = offset;
+
+        self._rFileId = fid;
+        self._rFilePath = path.join(self._qPath, 'queue_' + self._rFileId);
+        self._rFileSize = offset;
+      }
     }
+  }
 
-    var flags = 'w';
-    if(self.r_front_file_id_old<0) {
-        self.emit('info', 'new queue');
-        return flags;
-    }
-
-    self.emit('info', 'file_id:'+self.r_front_file_id_old+' offset:'+self.r_front_file_offset_old);
-    //set flag to r+
-    flags = 'r+';
-
-    //get files's rear
-    var fd = fs.openSync(self.r_file_path, 'r', 0755);     //当前文件描述符
-    var fid = self.r_file_id;                               //当前文件id
-    var offset = self.r_file_size;                                  //当前读取文件偏移量
-    var buffer = new Buffer(102400);
-
-    var last_fid = fid;
-    var last_fsize = offset;
-    var maybe_last_fid = last_fid;
-    var maybe_last_fsize = last_fsize;
-
-    var broken = false;
-    var expect = 0;     //0:check code;1:size;2:value
-    var size = 0;
-    var size_buf = new Buffer(2);
-    var size_last = 0;
-    var value_last = 0;
-
-    while(true) {
-        try {
-            var bytesRead = fs.readSync(fd, buffer, 0, buffer.length, offset);
-        } catch(err) {
-            fs.close(fd);
-            throw err;
-        }
-
-        for(var i=0; i<bytesRead; i++) {
-            if(expect==0) {
-                if(buffer[i]!=check_code) {
-                    broken = true;
-                    fs.close(fd);
-                    break;
-                }
-                if(size>0) {
-                    self.length++;
-                    self.r_last += 3+size;
-                    self.r_w_last += 3+size;
-                    last_fid = maybe_last_fid;
-                    last_fsize = maybe_last_fsize;
-
-                    if(self.length >= self.max_length) {
-                        broken = true;
-                        fs.close(fd);
-                        break;
-                    }
-                }
-                size_last = 2;
-                expect = 1;
-            } else if(expect==1) {
-                if(bytesRead-i>=size_last) {
-                    buffer.copy(size_buf, 2-size_last, i, i+size_last);
-                    size = size_buf.readUInt16BE(0);
-                    if(size<=0) {
-                        broken = true;
-                        fs.close(fd);
-                        break;
-                    }
-                    i += size_last-1;
-                    value_last = size;
-                    expect = 2;
-                } else {
-                    buffer.copy(size_buf, 2-size_last, i, bytesRead);
-                    size_last -= bytesRead-i;
-                    i += bytesRead-i-1;
-                }
-            } else {
-                if(bytesRead-i>=value_last) {
-                    i += value_last-1;
-                    maybe_last_fid = fid;
-                    maybe_last_fsize = offset+i+1;
-                    expect = 0;
-                } else {
-                    value_last -= bytesRead-i;
-                    i += bytesRead-i-1;
-                }
-            }
-        }
-        if(broken) {
-            break;
-        }
-
-        offset += bytesRead;
-
-        // open new file
-        if(bytesRead<buffer.length) {
-            fs.close(fd);
-            
-            var next_path = path.join(self.q_path, 'queue_'+(fid+1));
-            if(!path.existsSync(next_path)) {
-                if(expect==0) {     //normal file end
-                    if(size>0) {
-                        self.length++;
-                        self.r_last += 3+size;
-                        self.r_w_last += 3+size;
-                        last_fid = maybe_last_fid;
-                        last_fsize = maybe_last_fsize;
-                    }
-                } else {
-                    broken = true;
-                }
-                break;
-            }
-
-            self.f_list[fid] = offset;
-            fd = fs.openSync(next_path, 'r', 0755);
-            fid++;
-            offset = 0;
-        }
-    }
-    fs.close(fd);
-
-    
-    self.w_file_id = last_fid;
-    self.w_file_path = path.join(self.q_path, 'queue_'+self.w_file_id);
-    self.w_file_size = last_fsize;
-
-    // clear excess fid
-    var excess_fid = self.w_file_id+1;
-    while(typeof(self.f_list[excess_fid]) != 'undefined') {
-        delete self.f_list[excess_fid];
-        excess_fid++;
-    }
-
-    //truncate file
-    if(broken) {
-        var last_fd = fs.openSync(self.w_file_path, 'r+', 0755);
-        try {
-            fs.truncateSync(last_fd, self.w_file_size);
-        } catch(err) {
-            fs.close(last_fd);
-            throw err;
-        }
-    }
-
-    self.emit('info', 'last_fid:'+self.w_file_id+' last_fsize:'+self.w_file_size+' queue_length:'+self.length+' file_bytes:'+self.r_last+' broken:'+broken);
+  var flags = 'w';
+  if (self._rFrontFileOldId < 0) {
+    self.emit('info', 'new queue');
     return flags;
+  }
+
+  self.emit('info', 'file_id:' + self._rFrontFileOldId+' offset:' + self._rFrontFileOldOffset);
+  //set flag to r+
+  flags = 'r+';
+
+  //get files' rear
+  var fd = fs.openSync(self._rFilePath, 'r', 0755);     //当前文件描述符
+  var fid = self._rFileId;                               //当前文件id
+  var offset = self._rFileSize;                                  //当前读取文件偏移量
+  var buffer = new Buffer(102400);
+
+  var lastFileId = fid;
+  var lastFileSize = offset;
+  var maybeLastFileId = lastFileId;
+  var maybeLastFileSize = lastFileSize;
+
+  var broken = false;
+  var expect = 0;     //0:check code;1:size;2:value
+  var size = 0;
+  var sizeBuffer = new Buffer(2);
+  var sizeLast = 0;
+  var valueLast = 0;
+
+  while (true) {
+    try {
+      var bytesRead = fs.readSync(fd, buffer, 0, buffer.length, offset);
+    } catch (err) {
+      fs.close(fd);
+      throw err;
+    }
+
+    for (var i = 0; i < bytesRead; i++) {
+      if (expect == 0) {
+        if (buffer[i] != CHECK_CODE) {
+          broken = true;
+          fs.close(fd);
+          break;
+        }
+        if (size > 0) {
+          self.length++;
+          self._rLast += 3 + size;
+          self._rLastFromWriteBuffer += 3 + size;
+          lastFileId = maybeLastFileId;
+          lastFileSize = maybeLastFileSize;
+
+          if (self.length >= self._maxLength) {
+            broken = true;
+            fs.close(fd);
+            break;
+          }
+        }
+        sizeLast = 2;
+        expect = 1;
+      } else if (expect == 1) {
+        if (bytesRead - i >= sizeLast) {
+          buffer.copy(sizeBuffer, 2-sizeLast, i, i+sizeLast);
+          size = sizeBuffer.readUInt16BE(0);
+          if (size <= 0) {
+            broken = true;
+            fs.close(fd);
+            break;
+          }
+          i += sizeLast - 1;
+          valueLast = size;
+          expect = 2;
+        } else {
+          buffer.copy(sizeBuffer, 2 - sizeLast, i, bytesRead);
+          sizeLast -= bytesRead - i;
+          i += bytesRead - i - 1;
+        }
+      } else {
+        if (bytesRead - i >= valueLast) {
+          i += valueLast - 1;
+          maybeLastFileId = fid;
+          maybeLastFileSize = offset + i + 1;
+          expect = 0;
+        } else {
+          valueLast -= bytesRead - i;
+          i += bytesRead - i - 1;
+        }
+      }
+    }
+    if (broken) {
+      break;
+    }
+
+    offset += bytesRead;
+
+    // open new file
+    if (bytesRead < buffer.length) {
+      fs.close(fd);
+
+      var nextPath = path.join(self._qPath, 'queue_' + (fid + 1));
+      if (!path.existsSync(nextPath)) {
+        if (expect == 0) {     //normal file end
+          if (size > 0) {
+            self.length++;
+            self._rLast += 3 + size;
+            self._rLastFromWriteBuffer += 3 + size;
+            lastFileId = maybeLastFileId;
+            lastFileSize = maybeLastFileSize;
+          }
+        } else {
+          broken = true;
+        }
+        break;
+      }
+
+      self._filesList[fid] = offset;
+      fd = fs.openSync(nextPath, 'r', 0755);
+      fid++;
+      offset = 0;
+    }
+  }
+  fs.close(fd);
+
+
+  self._wFileId = lastFileId;
+  self._wFilePath = path.join(self._qPath, 'queue_' + self._wFileId);
+  self._wFileSize = lastFileSize;
+
+  // clear excess fid
+  var excessFileId = self._wFileId + 1;
+  while (typeof(self._filesList[excessFileId]) != 'undefined') {
+    delete self._filesList[excessFileId];
+    excessFileId++;
+  }
+
+  //truncate file
+  if (broken) {
+    var lastFile = fs.openSync(self._wFilePath, 'r+', 0755);
+    try {
+      fs.truncateSync(lastFile, self._wFileSize);
+    } catch (err) {
+      fs.close(lastFile);
+      throw err;
+    }
+  }
+
+  self.emit('info', 'last_fid:' + self._wFileId + ' last_fsize:' + self._wFileSize + ' queue_length:' + self.length + ' file_bytes:' + self._rLast + ' broken:' + broken);
+  return flags;
 };
 
 //start queue service
 Queue.prototype.start = function(callback) {
-    var self = this;
+  var self = this;
 
-    if(self.status!=0) {
-        var err = new Error('queue\'s status is not stopped');
-        self.emit('error', err);
-        callback && callback.call(self, err);
-        return;
-    }
+  if (self.status != 0) {
+    var err = new Error('queue\'s status is not stopped');
+    self.emit('error', err);
+    callback && callback.call(self, err);
+    return;
+  }
 
-    self.init();
-    self.status = 1;
+  self._init();
+  self.status = 1;
 
-    //mkdir
-    var exists = path.existsSync(self.q_path);
-    if(!exists) {
-        try {
-            fs.mkdirSync(self.q_path, 0755);
-        } catch(err) {
-            self.status = 0;
-            self.emit('error', err);
-            callback && callback.call(self, err);
-            return;
-        }
-    }
-
+  //mkdir
+  var exists = path.existsSync(self._qPath);
+  if (!exists) {
     try {
-        var flags = self.init_file();
-    } catch(err) {
-        self.status = 0;
-        self.emit('error', err);
-        callback && callback.call(self, err);
-        return;
+      fs.mkdirSync(self._qPath, 0755);
+    } catch (err) {
+      self.status = 0;
+      self.emit('error', err);
+      callback && callback.call(self, err);
+      return;
     }
+  }
 
-    //open file
-    //open index file
-    try {
-        self.i_file = fs.openSync(self.i_file_path, flags, 0775);
-    } catch(err) {
-        self.status = 0;
-        self.emit('error', err);
-        callback && callback.call(self, err);
-        return;
-    }
+  try {
+    var flags = self._initFile();
+  } catch (err) {
+    self.status = 0;
+    self.emit('error', err);
+    callback && callback.call(self, err);
+    return;
+  }
 
-    try {
-        self.w_file = fs.openSync(self.w_file_path, flags, 0755);
-    } catch(err) {
-        self.i_file = null;
+  //open file
+  //open index file
+  try {
+    self._iFile = fs.openSync(self._iFilePath, flags, 0775);
+  } catch (err) {
+    self.status = 0;
+    self.emit('error', err);
+    callback && callback.call(self, err);
+    return;
+  }
 
-        self.status = 0;
-        self.emit('error', err);
-        callback && callback.call(self, err);
-        return;
-    }
+  try {
+    self._wFile = fs.openSync(self._wFilePath, flags, 0755);
+  } catch (err) {
+    self._iFile = null;
 
-    try {
-        self.r_file = fs.openSync(self.r_file_path, 'r', 0755);
-    } catch(err) {
-        self.i_file = null;
-        self.w_file = null;
+    self.status = 0;
+    self.emit('error', err);
+    callback && callback.call(self, err);
+    return;
+  }
 
-        self.status = 0;
-        self.emit('error', err);
-        callback && callback.call(self, err);
-        return;
-    }
+  try {
+    self._rFile = fs.openSync(self._rFilePath, 'r', 0755);
+  } catch (err) {
+    self._iFile = null;
+    self._wFile = null;
 
-    //allocate buffer memory
-    self.w_buffer = new Buffer(self.w_buf_size);
-    self.r_buffer = new Buffer(self.r_buf_size);
+    self.status = 0;
+    self.emit('error', err);
+    callback && callback.call(self, err);
+    return;
+  }
 
-    self.w_timeout_id = setTimeout(function() {
-        self.save();
-    }, self.w_timeout);
+  //allocate buffer memory
+  self._wBuffer = new Buffer(self._wBufSize);
+  self._rBuffer = new Buffer(self._rBufSize);
 
-    self.r_timeout_id = setTimeout(function() {
-        self.load();
-    }, self.r_timeout);
+  self._wTimeoutId = setTimeout(function() {
+    self._save();
+  }, self._wTimeout);
 
-    self.i_timeout_id = setTimeout(function() {
-        self.index();
-    }, 0);
+  self._rTimeoutId = setTimeout(function() {
+    self._load();
+  }, self._rTimeout);
 
-    //del next file
-    var next_path = path.join(self.q_path, 'queue_'+(self.w_file_id+1));
-    fs.unlink(next_path);
+  self._iTimeoutId = setTimeout(function() {
+    self._index();
+  }, 0);
 
-    self.status = 2;
-    self.emit('start');
-    callback && callback.call(self);
+  //delete next file
+  var nextPath = path.join(self._qPath, 'queue_' + (self._wFileId + 1));
+  fs.unlink(nextPath);
+
+  self.status = 2;
+  self.emit('start');
+  callback && callback.call(self);
 };
 
 //write queue
-Queue.prototype.save = function() {
-    var self = this;
+Queue.prototype._save = function() {
+  var self = this;
 
-    //nothing to save
-    if(self.w_unsaved_size<=0) {
-        //stopping
-        if(self.status==3) {
-            fs.close(self.w_file);
-            self.w_file = null;
-            self.w_buffer = null;
-            self.w_timeout_id = null;
-            return;
-        }
+  //nothing to save
+  if (self._wUnsavedSize <= 0) {
+    //stopping
+    if (self.status == 3) {
+      fs.close(self._wFile);
+      self._wFile = null;
+      self._wBuffer = null;
+      self._wTimeoutId = null;
+      return;
+    }
 
-        self.w_timeout_id = setTimeout(function() {
-            self.save();
-        }, self.w_timeout);
+    self._wTimeoutId = setTimeout(function() {
+      self._save();
+    }, self._wTimeout);
+    return;
+  }
+
+  var fileFreeSize = self._fileMaxSize - self._wFileSize;
+  //current file is full
+  if (fileFreeSize <= 0) {
+    //save current file length
+    self._filesList[self._wFileId] = self._wFileSize;
+
+    //close current file
+    fs.close(self._wFile);
+
+    //open new file
+    self._wFileId++;
+    self._wFilePath = path.join(self._qPath, 'queue_' + self._wFileId);
+    self._wFileSize = 0;
+
+    fs.open(self._wFilePath, 'w', 0755, function(err, fd) {
+      if (err) {
+        self._wFile = null;
+        self._wBuffer = null;
+        self._wTimeoutId = null;
+
+        self.emit('error', err);
+        self.stop();
         return;
-    }
-
-    var file_last_size = self.file_max_size - self.w_file_size;
-    //current file is full
-    if(file_last_size<=0) {
-        //save current file length
-        self.f_list[self.w_file_id] = self.w_file_size;
-
-        //close current file
-        fs.close(self.w_file);
-
-        //open new file
-        self.w_file_id++;
-        self.w_file_path = path.join(self.q_path, 'queue_'+self.w_file_id);
-        self.w_file_size = 0;
-        
-        fs.open(self.w_file_path, 'w', 0755, function(err, fd) {
-            if(err) {
-                self.w_file = null;
-                self.w_buffer = null;
-                self.w_timeout_id = null;
-
-                self.emit('error', err);
-                self.stop();
-                return;
-            }
-            self.w_file = fd;
-            self.save();
-        });
-
-        //del next file
-        var next_path = path.join(self.q_path, 'queue_'+(self.w_file_id+1));
-        fs.unlink(next_path);
-
-        return;
-    }
-
-    //save
-    var w_last_size;
-    //loop
-    if(self.w_buf_size-self.wf_rear < self.w_unsaved_size) {
-        w_last_size = self.w_buf_size - self.wf_rear;
-    } else {
-        w_last_size = self.w_unsaved_size;
-    }
-    w_last_size = w_last_size<file_last_size ? w_last_size : file_last_size;
-    fs.write(self.w_file, self.w_buffer, self.wf_rear, w_last_size, self.w_file_size, function(err, written, buffer) {
-        if(err) {
-            fs.close(self.w_file);
-            self.w_file = null;
-            self.w_buffer = null;
-            self.w_timeout_id = null;
-
-            self.emit('error', err);
-            self.stop();
-            return;
-        }
-
-        self.w_unsaved_size -= written;
-        self.w_file_size += written;
-        self.wf_rear += written;
-        if(self.wf_rear >= self.w_buf_size) {
-            self.wf_rear -= self.w_buf_size;
-        }
-        self.r_last += written;
-        self.w_timeout_id = setTimeout(function() {
-            self.save();
-        }, 0);
+      }
+      self._wFile = fd;
+      self._save();
     });
+
+    //delete next file
+    var nextPath = path.join(self._qPath, 'queue_'+ (self._wFileId + 1));
+    fs.unlink(nextPath);
+
+    return;
+  }
+
+  //save
+  var saveSize;
+  //loop
+  if (self._wBufSize - self._wFileRear < self._wUnsavedSize) {
+    saveSize = self._wBufSize - self._wFileRear;
+  } else {
+    saveSize = self._wUnsavedSize;
+  }
+  saveSize = saveSize < fileFreeSize ? saveSize : fileFreeSize;
+  fs.write(self._wFile, self._wBuffer, self._wFileRear, saveSize, self._wFileSize, function(err, written, buffer) {
+    if (err) {
+      fs.close(self._wFile);
+      self._wFile = null;
+      self._wBuffer = null;
+      self._wTimeoutId = null;
+
+      self.emit('error', err);
+      self.stop();
+      return;
+    }
+
+    self._wUnsavedSize -= written;
+    self._wFileSize += written;
+    self._wFileRear += written;
+    if (self._wFileRear >= self._wBufSize) {
+      self._wFileRear -= self._wBufSize;
+    }
+    self._rLast += written;
+    self._wTimeoutId = setTimeout(function() {
+      self._save();
+    }, 0);
+  });
 };
 
 //enQueue
 Queue.prototype.enQueue = function(value) {
-    var self = this;
+  var self = this;
 
-    if(!value || value.length<=0) {
-        throw new Error('value is empty');
-    }
+  if (!value || value.length <= 0) {
+    throw new Error('value is empty');
+  }
 
-    if(self.status!=2) {
-        throw new Error('queue is not started');
-    }
+  if (self.status != 2) {
+    throw new Error('queue is not started');
+  }
 
-    var size = value.length;
-    if(size>0xFFFF) {
-        throw new Error('value length is too big(don\'t exceed 65535 bytes)');
-    }
-    if(size+3>self.w_buf_size-self.w_unsaved_size) {
-        throw new Error('write buffer is full');
-    }
-    if(self.length >= self.max_length) {
-        throw new Error('queue is full');
-    }
+  var size = value.length;
+  if (size > 0xFFFF) {
+    throw new Error('value length is too big(don\'t exceed 65535 bytes)');
+  }
+  if (size + 3 > self._wBufSize - self._wUnsavedSize) {
+    throw new Error('write buffer is full');
+  }
+  if (self.length >= self._maxLength) {
+    throw new Error('queue is full');
+  }
 
-    var size_buf = new Buffer(3);
-    size_buf.writeUInt8(check_code, 0);
-    size_buf.writeUInt16BE(size, 1);
-    var rear;
-    if(self.w_buf_size>=self.w_rear+3) {
-        rear = self.w_rear+3;
-        size_buf.copy(self.w_buffer, self.w_rear, 0, 3);
-    }else {
-        rear = 3-(self.w_buf_size-self.w_rear);
-        size_buf.copy(self.w_buffer, self.w_rear, 0, 3-rear);
-        size_buf.copy(self.w_buffer, 0, 3-rear, 3);
-    }
-    if(self.w_buf_size>=rear+size) {
-        self.w_rear = rear+size;
-        value.copy(self.w_buffer, rear, 0, size);
-    }else {
-        self.w_rear = size-(self.w_buf_size-rear);
-        value.copy(self.w_buffer, rear, 0, size-self.w_rear);
-        value.copy(self.w_buffer, 0, size-self.w_rear, size);
-    }
+  var sizeBuffer = new Buffer(3);
+  sizeBuffer.writeUInt8(CHECK_CODE, 0);
+  sizeBuffer.writeUInt16BE(size, 1);
+  var rear;
+  if (self._wBufSize >= self._wRear + 3) {
+    rear = self._wRear + 3;
+    sizeBuffer.copy(self._wBuffer, self._wRear, 0, 3);
+  } else {
+    rear = 3 - (self._wBufSize - self._wRear);
+    sizeBuffer.copy(self._wBuffer, self._wRear, 0, 3 - rear);
+    sizeBuffer.copy(self._wBuffer, 0, 3 - rear, 3);
+  }
+  if (self._wBufSize >= rear + size) {
+    self._wRear = rear + size;
+    value.copy(self._wBuffer, rear, 0, size);
+  } else {
+    self._wRear = size - (self._wBufSize - rear);
+    value.copy(self._wBuffer, rear, 0, size - self._wRear);
+    value.copy(self._wBuffer, 0, size - self._wRear, size);
+  }
 
-    if(self.w_rear>=self.w_buf_size) {
-        self.w_rear -= self.w_buf_size;
+  if (self._wRear >= self._wBufSize) {
+    self._wRear -= self._wBufSize;
+  }
+  self.length++;
+  self._wUnsavedSize += 3 + size;
+  self._wUsedSize += 3 + size;
+  if (self._wUsedSize > self._wBufSize) {
+    self._wFront += self._wUsedSize - self._wBufSize;
+    if (self._wFront >= self._wBufSize) {
+      self._wFront -= self._wBufSize;
     }
-    self.length++;
-    self.w_unsaved_size += 3+size;
-    self.w_used_size += 3+size;
-    if(self.w_used_size > self.w_buf_size) {
-        self.w_front += self.w_used_size-self.w_buf_size;
-        if(self.w_front >= self.w_buf_size) {
-            self.w_front -= self.w_buf_size;
-        }
-        self.r_w_last += self.w_used_size-self.w_buf_size;
-        self.w_used_size = self.w_buf_size;
-    }
+    self._rLastFromWriteBuffer += self._wUsedSize - self._wBufSize;
+    self._wUsedSize = self._wBufSize;
+  }
 };
 
 //read queue
-Queue.prototype.load = function() {
-    var self = this;
+Queue.prototype._load = function() {
+  var self = this;
 
-    //stopping
-    if(self.status==3) {
-        fs.close(self.r_file);
-        self.r_file = null;
-        self.r_buffer = null;
-        self.r_timeout_id = null;
-        return;
+  //stopping
+  if (self.status == 3) {
+    fs.close(self._rFile);
+    self._rFile = null;
+    self._rBuffer = null;
+    self._rTimeoutId = null;
+    return;
+  }
+
+  var loadSize = self._rBufSize - self._rUsedSize;
+  loadSize = loadSize < (self._rBufSize - self._rRear) ? loadSize : (self._rBufSize - self._rRear);
+  loadSize = loadSize < self._rLast ? loadSize : self._rLast;
+
+  //_rFile full or empty file
+  if (loadSize <= 0) {
+    self._rTimeoutId = setTimeout(function() {
+      self._load();
+    }, self._rTimeout);
+    return;
+  }
+
+  //load
+  fs.read(self._rFile, self._rBuffer, self._rRear, loadSize, self._rFileSize, function(err, bytesRead, buffer) {
+    if (err) {
+      fs.close(self._rFile);
+      self._rFile = null;
+      self._rBuffer = null;
+      self._rTimeoutId = null;
+
+      self.emit('error', err);
+      self.stop();
+      return;
     }
 
-    var r_last_size = self.r_buf_size - self.r_used_size;
-    r_last_size = r_last_size<(self.r_buf_size-self.r_rear) ? r_last_size : (self.r_buf_size-self.r_rear);
-    r_last_size = r_last_size<self.r_last ? r_last_size : self.r_last;
+    self._rRear += bytesRead;
+    if (self._rRear >= self._rBufSize) {
+      self._rRear -= self._rBufSize;
+    }
+    self._rUsedSize += bytesRead;
+    self._rLast -= bytesRead;
+    self._rLastFromWriteBuffer -= bytesRead;
+    self._rFileSize += bytesRead;
 
-    //r_file full or empty file
-    if(r_last_size<=0) {
-        self.r_timeout_id = setTimeout(function() {
-            self.load();
-        }, self.r_timeout);
-        return;
+    //file loop
+    if (bytesRead < loadSize) {
+      //close current file
+      fs.close(self._rFile);
+
+      //open new file
+      self._rFileId++;
+      self._rFilePath = path.join(self._qPath, 'queue_' + self._rFileId);
+      self._rFileSize = 0;
+
+      fs.open(self._rFilePath, 'r', 0755, function(err, fd) {
+        if (err) {
+          self._rFile = null;
+          self._rBuffer = null;
+          self._rTimeoutId = null;
+
+          self.emit('error', err);
+          self.stop();
+          return;
+        }
+        self._rFile = fd;
+        self._load();
+      });
+      return;
     }
 
-    //load
-    fs.read(self.r_file, self.r_buffer, self.r_rear, r_last_size, self.r_file_size, function(err, bytesRead, buffer) {
-        if(err) {
-            fs.close(self.r_file);
-            self.r_file = null;
-            self.r_buffer = null;
-            self.r_timeout_id = null;
-
-            self.emit('error', err);
-            self.stop();
-            return;
-        }
-
-        self.r_rear += bytesRead;
-        if(self.r_rear >= self.r_buf_size) {
-            self.r_rear -= self.r_buf_size;
-        }
-        self.r_used_size += bytesRead;
-        self.r_last -= bytesRead;
-        self.r_w_last -= bytesRead;
-        self.r_file_size += bytesRead;
-
-        //file loop
-        if(bytesRead<r_last_size) {
-            //close current file
-            fs.close(self.r_file);
-
-            //open new file
-            self.r_file_id++;
-            self.r_file_path = path.join(self.q_path, 'queue_'+self.r_file_id);
-            self.r_file_size = 0;
-
-            fs.open(self.r_file_path, 'r', 0755, function(err, fd) {
-                if(err) {
-                    self.r_file = null;
-                    self.r_buffer = null;
-                    self.r_timeout_id = null;
- 
-                    self.emit('error', err);
-                    self.stop();
-                    return;
-                }
-                self.r_file = fd;
-                self.load();
-            });
-            return;
-        }
-
-        self.r_timeout_id = setTimeout(function() {
-            self.load();
-        }, 0);
-    });
+    self._rTimeoutId = setTimeout(function() {
+      self._load();
+    }, 0);
+  });
 };
 
 //deQueue
 Queue.prototype.deQueue = function() {
-    var self = this;
+  var self = this;
 
-    if(self.length<=0) {
-        return null;
-    }
-    if(self.status!=2) {
-        throw new Error('queue is not started');
-    }
+  if (self.length <= 0) {
+    return null;
+  }
+  if (self.status != 2) {
+    throw new Error('queue is not started');
+  }
 
-    if(self.r_used_size<3) {
-        throw new Error('read buffer is empty');
-    }
-    var size_buf = new Buffer(3);
-    var front;
-    if(self.r_buf_size>=self.r_front+3) {
-        front = self.r_front+3;
-        self.r_buffer.copy(size_buf, 0, self.r_front, front);
-    }else {
-        front = 3-(self.r_buf_size-self.r_front);
-        self.r_buffer.copy(size_buf, 0, self.r_front, self.r_buf_size);
-        self.r_buffer.copy(size_buf, 3-front, 0, front);
-    }
-    //check code
-    if(size_buf.readUInt8(0)!=check_code) {
-        throw new Error('check code error');
-    }
-    var size = size_buf.readUInt16BE(1);
+  if (self._rUsedSize < 3) {
+    throw new Error('read buffer is empty');
+  }
+  var sizeBuffer = new Buffer(3);
+  var front;
+  if (self._rBufSize >= self._rFront + 3) {
+    front = self._rFront + 3;
+    self._rBuffer.copy(sizeBuffer, 0, self._rFront, front);
+  } else {
+    front = 3 - (self._rBufSize - self._rFront);
+    self._rBuffer.copy(sizeBuffer, 0, self._rFront, self._rBufSize);
+    self._rBuffer.copy(sizeBuffer, 3 - front, 0, front);
+  }
+  //check code
+  if (sizeBuffer.readUInt8(0) != CHECK_CODE) {
+    throw new Error('check code error');
+  }
+  var size = sizeBuffer.readUInt16BE(1);
 
-    if(self.r_used_size<3+size) {
-        throw new Error('read buffer is empty');
-    }
-    var value = new Buffer(size);
-    if(self.r_buf_size>=front+size) {
-        self.r_front = front+size;
-        self.r_buffer.copy(value, 0, front, self.r_front);
-    }else {
-        self.r_front = size-(self.r_buf_size-front);
-        self.r_buffer.copy(value, 0, front, self.r_buf_size);
-        self.r_buffer.copy(value, size-self.r_front, 0, self.r_front);
-    }
-    if(self.r_front>=self.r_buf_size) {
-        self.r_front -= self.r_buf_size;
-    }
-    self.length--;
-    self.r_used_size -= 3+size;
+  if (self._rUsedSize < 3 + size) {
+    throw new Error('read buffer is empty');
+  }
+  var value = new Buffer(size);
+  if (self._rBufSize >= front + size) {
+    self._rFront = front + size;
+    self._rBuffer.copy(value, 0, front, self._rFront);
+  } else {
+    self._rFront = size - (self._rBufSize - front);
+    self._rBuffer.copy(value, 0, front, self._rBufSize);
+    self._rBuffer.copy(value, size - self._rFront, 0, self._rFront);
+  }
+  if (self._rFront >= self._rBufSize) {
+    self._rFront -= self._rBufSize;
+  }
+  self.length--;
+  self._rUsedSize -= 3 + size;
 
-    self.r_front_file_offset += 3+size;
-    while(self.f_list[self.r_front_file_id]<self.r_front_file_offset) {
-        self.r_front_file_offset -= self.f_list[self.r_front_file_id];
-        self.r_front_file_id++;
-    }
-    return value;
+  self._rFrontFileOffset += 3 + size;
+  while (self._filesList[self._rFrontFileId] < self._rFrontFileOffset) {
+    self._rFrontFileOffset -= self._filesList[self._rFrontFileId];
+    self._rFrontFileId++;
+  }
+  return value;
 };
 
 //index
-Queue.prototype.index = function() {
-    var self = this;
+Queue.prototype._index = function() {
+  var self = this;
 
-    //nothing to save
-    if(self.r_front_file_id_old==self.r_front_file_id && self.r_front_file_offset_old==self.r_front_file_offset) {
-        //stopping
-        if(self.status==3) {
-            fs.close(self.i_file);
-            self.i_file = null;
-            self.i_timeout_id = null;
-            return;
-        }
-
-        self.i_timeout_id = setTimeout(function() {
-            self.index();
-        }, self.i_timeout);
-        return;
+  //nothing to save
+  if (self._rFrontFileOldId == self._rFrontFileId && self._rFrontFileOldOffset == self._rFrontFileOffset) {
+    //stopping
+    if (self.status == 3) {
+      fs.close(self._iFile);
+      self._iFile = null;
+      self._iTimeoutId = null;
+      return;
     }
 
-    self.r_front_file_id_old = self.r_front_file_id;
-    self.r_front_file_offset_old = self.r_front_file_offset;
+    self._iTimeoutId = setTimeout(function() {
+      self._index();
+    }, self._iTimeout);
+    return;
+  }
 
-    var index_buf = new Buffer(self.r_front_file_id+','+self.r_front_file_offset+',');
-    fs.write(self.i_file, index_buf, 0, index_buf.length, 0, function(err, written, buffer) {
-        if(err) {
-            fs.close(self.i_file);
-            self.i_file = null;
-            self.i_timeout_id = null;
+  self._rFrontFileOldId = self._rFrontFileId;
+  self._rFrontFileOldOffset = self._rFrontFileOffset;
 
-            self.emit('error', err);
-            self.stop();
-            return;
-        }
-        fs.truncate(self.i_file, index_buf.length, function(err) {
-            if(err) {
-                fs.close(self.i_file);
-                self.i_file = null;
-                self.i_timeout_id = null;
+  var indexStr = self._rFrontFileId + ',' + self._rFrontFileOffset + ',';
+  fs.write(self._iFile, new Buffer(indexStr), 0, indexStr.length, 0, function(err, written, buffer) {
+    if (err) {
+      fs.close(self._iFile);
+      self._iFile = null;
+      self._iTimeoutId = null;
 
-                self.emit('error', err);
-                self.stop();
-                return;
-            }
-            //del old file
-            for(var i=self.r_front_file_id_old-1; i>=0 && typeof(self.f_list[i])!='undefined'; i--) {
-                var old_path = path.join(self.q_path, 'queue_'+i);
-                fs.unlink(old_path);
-                delete self.f_list[i];
-            }
-            self.i_timeout_id = setTimeout(function() {
-                self.index();
-            }, self.i_timeout);
-        });
+      self.emit('error', err);
+      self.stop();
+      return;
+    }
+    fs.truncate(self._iFile, indexStr.length, function(err) {
+      if (err) {
+        fs.close(self._iFile);
+        self._iFile = null;
+        self._iTimeoutId = null;
+
+        self.emit('error', err);
+        self.stop();
+        return;
+      }
+      //delete old file
+      for (var i = self._rFrontFileOldId - 1; i >= 0 && typeof(self._filesList[i]) != 'undefined'; i--) {
+        var oldPath = path.join(self._qPath, 'queue_' + i);
+        fs.unlink(oldPath);
+        delete self._filesList[i];
+      }
+      self._iTimeoutId = setTimeout(function() {
+        self._index();
+      }, self._iTimeout);
     });
-
+  });
 };
 
 //stop queue service
 Queue.prototype.stop = function(callback) {
-    var self = this;
+  var self = this;
 
-    //closed or closing
-    if(self.status==0 || self.status==3) {
-        callback && callback.call(self);
-        return;
-    }
-    //starting
-    if(self.status==1) {
-        self.once('start', function() {
-            self.stop(callback);
-        });
-        return;
-    }
+  //closed or closing
+  if (self.status == 0 || self.status == 3) {
+    callback && callback.call(self);
+    return;
+  }
+  //starting
+  if (self.status == 1) {
+    self.once('start', function() {
+      self.stop(callback);
+    });
+    return;
+  }
 
-    self.status=3;
+  self.status = 3;
 
-    if(!self.w_timeout_id) {
-        if(self.w_file) {
-            fs.close(self.w_file);
-            self.w_file = null;
-        }
-        self.w_buffer = null;
+  if (!self._wTimeoutId) {
+    if (self._wFile) {
+      fs.close(self._wFile);
+      self._wFile = null;
     }
-    if(!self.r_timeout_id) {
-        if(self.r_file) {
-            fs.close(self.r_file);
-            self.r_file = null;
-        }
-        self.r_buffer = null;
+    self._wBuffer = null;
+  }
+  if (!self._rTimeoutId) {
+    if (self._rFile) {
+      fs.close(self._rFile);
+      self._rFile = null;
     }
-    if(!self.i_timeout_id) {
-        if(self.i_file) {
-            fs.close(self.i_file);
-            self.i_file = null;
-        }
+    self._rBuffer = null;
+  }
+  if (!self._iTimeoutId) {
+    if (self._iFile) {
+      fs.close(self._iFile);
+      self._iFile = null;
     }
+  }
 
-    var wait_stop = function () {
-        if(self.status!=3) {
-            callback && callback.call(self);
-            return;
-        }
-        if(!self.w_file && !self.w_buffer && !self.w_timeout_id && !self.r_file && !self.r_buffer && !self.r_timeout_id && !self.i_file && !self.i_timeout_id) {
-            self.status = 0;
-            self.emit('stop');
-            callback && callback.call(self);
-            return;
-        }
-        setTimeout(wait_stop, 10);
-    };
-    setTimeout(wait_stop, 10);
+  var waitingStop = function () {
+    if (self.status != 3) {
+      callback && callback.call(self);
+      return;
+    }
+    if (!self._wFile && !self._wBuffer && !self._wTimeoutId && !self._rFile && !self._rBuffer && !self._rTimeoutId && !self._iFile && !self._iTimeoutId) {
+      self.status = 0;
+      self.emit('stop');
+      callback && callback.call(self);
+      return;
+    }
+    setTimeout(waitingStop, 10);
+  };
+  setTimeout(waitingStop, 10);
 };
 
 //exports

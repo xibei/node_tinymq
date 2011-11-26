@@ -1,115 +1,116 @@
 var events = require('events');
+var util = require('util');
 var Queue = require('./queue');
 
 function Server() {
-    var self = this;
+  var self = this;
 
-    //get queue's name
-    var args = [].slice.call(arguments, 0);
-    self.options = args[args.length-1];
-    self.q_name = args.slice(0, args.length-1);
+  //get queue's name
+  var args = [].slice.call(arguments, 0);
+  self._options = args[args.length - 1];
+  self._queueNames = args.slice(0, args.length - 1);
 
-    self.queues = {};
-    for(var i=0; i<self.q_name.length; i++) {
-        self.queues[self.q_name[i]] = new Queue(self.q_name[i], self.options);
-        (function() {
-            var q_name = self.q_name[i];
-            self.queues[q_name].on('info', function(info) {
-                self.emit('info', 'queue '+q_name+' info: '+info);
-            });
-        })();
-    }
+  self._queues = {};
+  for (var i = 0; i < self._queueNames.length; i++) {
+    self._queues[self._queueNames[i]] = new Queue(self._queueNames[i], self._options);
+    (function() {
+       var queueName = self._queueNames[i];
+       self._queues[queueName].on('info', function(info) {
+         self.emit('info', 'queue ' + queueName + ' info: ' + info);
+       });
+    })();
+  }
 
-    self.p_server = null;
+  self._protocolServer = null;
 }
 
 //extend EventEmitter
-Server.prototype = new events.EventEmitter();
+util.inherits(Server, events.EventEmitter);
 
 //stop all queues
-Server.prototype.stop_queues = function(callback) {
-    var self = this;
+Server.prototype._stopQueues = function(callback) {
+  var self = this;
 
-    //stop all queues
-    var stopped_num = 0;
-    for(var q in self.queues) {
-        self.queues[q].stop(function() {
-            stopped_num++;
-            if(stopped_num==self.q_name.length) {
-                callback && callback.call(self);
-            }
-        });
-    }
+  //stop all queues
+  var stoppedNum = 0;
+  for (var q in self._queues) {
+    self._queues[q].stop(function() {
+      stoppedNum++;
+      if (stoppedNum == self._queueNames.length) {
+        callback && callback.call(self);
+      }
+    });
+  }
 };
 
 //start
 Server.prototype.start = function(port, hostname, protocol, callback) {
-    var self = this;
+  var self = this;
 
-    self.port = port;
+  self._port = port;
 
-    if(!protocol) {
-        protocol = 'http';
-    }
-    
-    //start queue
-    var started_num = 0;
-    var started_ok = true;
-    for(var q in self.queues) {
-        self.queues[q].start(function(err) {
-            started_num++;
-            if(err) {
-                started_ok = false;
-            }
-            if(started_num<self.q_name.length) {
-                return;
-            }
+  if (!protocol) {
+    protocol = 'http';
+  }
 
-            //faild
-            if(!started_ok) {
-                self.stop_queues(function() {
-                    var err = new Error('queues start faild');
-                    self.emit('error', err);
-                    callback && callback.call(self, err);
-                });
-                return;
-            }
+  //start queue
+  var startedNum = 0;
+  var startedOk = true;
+  for (var q in self._queues) {
+    self._queues[q].start(function(err) {
+      startedNum++;
+      if (err) {
+        startedOk = false;
+      }
+      if (startedNum < self._queueNames.length) {
+        return;
+      }
 
-            //start protocol server
-            self.p_server = require('./'+protocol).createServer(function(en_queue, q_name, value){
-                var q = self.queues[q_name];
-                if(!q) {
-                    throw new Error('queue is not exist');
-                }
-                if(en_queue) {
-                    q.enQueue(value);
-                } else {
-                    return q.deQueue();
-                }
-            });
-            self.p_server.listen(port, hostname, function() {
-                self.emit('start');
-                callback && callback.call(self);
-            });
+      //failed
+      if (!startedOk) {
+        self._stopQueues(function() {
+          var err = new Error('queues start faild');
+          self.emit('error', err);
+          callback && callback.call(self, err);
         });
-    }
+        return;
+      }
+
+      //start protocol server
+      self._protocolServer = require('./' + protocol).createServer(function(enQueue, queueName, value) {
+        var q = self._queues[queueName];
+        if (!q) {
+          throw new Error('queue is not exist');
+        }
+        if (enQueue) {
+          q.enQueue(value);
+        } else {
+          return q.deQueue();
+        }
+      });
+      self._protocolServer.listen(port, hostname, function() {
+        self.emit('start');
+        callback && callback.call(self);
+      });
+    });
+  }
 };
 
 //close
 Server.prototype.close = function(callback) {
-    var self = this;
+  var self = this;
 
-    //stop protocol server
-    if(self.p_server) {
-        self.p_server.close();
-        self.p_server = null;
-    }
+  //stop protocol server
+  if (self._protocolServer) {
+    self._protocolServer.close();
+    self._protocolServer = null;
+  }
 
-    //stop queues
-    self.stop_queues(function() {
-        self.emit('close');
-        callback && callback.call(self);
-    });
+  //stop queues
+  self._stopQueues(function() {
+    self.emit('close');
+    callback && callback.call(self);
+  });
 };
 
 //exports

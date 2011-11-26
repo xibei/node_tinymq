@@ -3,33 +3,33 @@
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
 <script language="javascript">
 function enqueue() {
-    var q_name = document.getElementById("q_name").value;
-    var data = document.getElementById("data").value;
+  var q_name = document.getElementById('q_name').value;
+  var data = document.getElementById('data').value;
 
-    var req = new XMLHttpRequest();
-    req.onreadystatechange = function() {
-        if(req.readyState==4) {
-            alert("HttpCode: "+req.status+"\n\n"+req.responseText);
-        }
-    };
+  var req = new XMLHttpRequest();
+  req.onreadystatechange = function() {
+    if (req.readyState == 4) {
+      alert('HttpCode: ' + req.status + '\n\n' + req.responseText);
+    }
+  };
 
-    req.open("POST", "/"+q_name, true);
-    req.setRequestHeader("Content-Type", "application/binary");
-    req.send(data);
+  req.open('POST', '/' + q_name, true);
+  req.setRequestHeader('Content-Type', 'application/binary');
+  req.send(data);
 }
 function dequeue() {
-    var q_name = document.getElementById("q_name").value;
+  var q_name = document.getElementById('q_name').value;
 
-    var req = new XMLHttpRequest();
-    req.onreadystatechange = function() {
-        if(req.readyState==4) {
-            alert("HttpCode: "+req.status+"\n\n"+req.responseText);
-        }
-    };
+  var req = new XMLHttpRequest();
+  req.onreadystatechange = function() {
+    if (req.readyState == 4) {
+      alert('HttpCode: ' + req.status + '\n\n' + req.responseText);
+    }
+  };
 
-    req.open("GET", "/"+q_name, true);
-    req.setRequestHeader("Content-Type", "application/binary");
-    req.send(null);
+  req.open('GET', '/' + q_name, true);
+  req.setRequestHeader('Content-Type', 'application/binary');
+  req.send(null);
 }
 </script>
 </head>
