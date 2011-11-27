@@ -3,6 +3,7 @@ var util = require('util');
 var Queue = require('./queue');
 
 function Server() {
+  events.EventEmitter.call(this);
   var self = this;
 
   //get queue's name

@@ -5,9 +5,11 @@ var util = require('util');
 
 //check code
 var CHECK_CODE = 0x21;
+var sizeBuffer = new Buffer(3);
 
 //class Queue
 function Queue(name, options) {
+  events.EventEmitter.call(this);
   var self = this;
 
   self._name = name;                                          //队列名称
@@ -126,7 +128,6 @@ Queue.prototype._initFile = function() {
   var broken = false;
   var expect = 0;     //0:check code;1:size;2:value
   var size = 0;
-  var sizeBuffer = new Buffer(2);
   var sizeLast = 0;
   var valueLast = 0;
 
@@ -230,7 +231,7 @@ Queue.prototype._initFile = function() {
 
   // clear excess fid
   var excessFileId = self._wFileId + 1;
-  while (typeof(self._filesList[excessFileId]) != 'undefined') {
+  while (typeof self._filesList[excessFileId] != 'undefined') {
     delete self._filesList[excessFileId];
     excessFileId++;
   }
@@ -476,7 +477,6 @@ Queue.prototype.enQueue = function(value) {
     throw new Error('queue is full');
   }
 
-  var sizeBuffer = new Buffer(3);
   sizeBuffer.writeUInt8(CHECK_CODE, 0);
   sizeBuffer.writeUInt16BE(size, 1);
   var rear;
@@ -639,7 +639,6 @@ Queue.prototype.deQueue = function() {
   if (self._rUsedSize < 3) {
     throw new Error('read buffer is empty');
   }
-  var sizeBuffer = new Buffer(3);
   var front;
   if (self._rBufSize >= self._rFront + 3) {
     front = self._rFront + 3;
@@ -726,7 +725,7 @@ Queue.prototype._index = function() {
         return;
       }
       //delete old file
-      for (var i = self._rFrontFileOldId - 1; i >= 0 && typeof(self._filesList[i]) != 'undefined'; i--) {
+      for (var i = self._rFrontFileOldId - 1; i >= 0 && typeof self._filesList[i] != 'undefined'; i--) {
         var oldPath = path.join(self._qPath, 'queue_' + i);
         fs.unlink(oldPath);
         delete self._filesList[i];
