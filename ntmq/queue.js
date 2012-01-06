@@ -335,7 +335,7 @@ Queue.prototype.start = function(callback) {
 
   self._iTimeoutId = setTimeout(function() {
     self._index();
-  }, 0);
+  }, 1);
 
   //delete next file
   var nextPath = path.join(self._qPath, 'queue_' + (self._wFileId + 1));
@@ -432,7 +432,7 @@ Queue.prototype._save = function() {
     self._rLast += written;
     self._wTimeoutId = setTimeout(function() {
       self._save();
-    }, 0);
+    }, 1);
   });
 };
 
@@ -621,7 +621,7 @@ Queue.prototype._load = function() {
 
     self._rTimeoutId = setTimeout(function() {
       self._load();
-    }, 0);
+    }, 1);
   });
 };
 

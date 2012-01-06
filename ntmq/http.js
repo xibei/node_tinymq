@@ -44,8 +44,16 @@ httpWrap.createServer = function(callback) {
           res.end(err.message);
           return;
         }
-        res.writeHead(200, {'Content-Type': 'application/binary', 'Content-Length': 'ok'.length});
+        res.writeHead(200, {'Content-Type': 'application/binary', 'Content-Length': 2});
         res.end('ok');
+        /*
+        res.connection.write('HTTP/1.1 200 OK\r\nContent-Type: application/binary\r\nContent-Length: ' + 2 + '\r\n\r\nok');
+        res._headerSent = true;
+        res.finished = true;
+        if (res.output.length === 0 && res.connection._httpMessage === res) {
+          res._finish();
+        }
+        */
       });
     } else {
       var error = 'only GET/POST/PUT are allowed';
